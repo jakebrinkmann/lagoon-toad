@@ -1,69 +1,29 @@
-#-----------------------------------------------------------------------------
-# Makefile
-#
-# Simple makefile for building and installing raw_binary.
-#-----------------------------------------------------------------------------
-.PHONY: all install-headers install-lib install clean
+.DEFAULT_GOAL := build
+VERSION    := $(or $(TRAVIS_TAG),$(shell cat version.txt))
+REPO       := $(or $(DOCKER_USER),$(shell whoami))"/$(shell basename $(shell pwd))"
+BRANCH     := $(or $(TRAVIS_BRANCH),$(shell git rev-parse --abbrev-ref HEAD | tr / -))
+COMMIT     := $(or $(TRAVIS_COMMIT),$(shell git rev-parse HEAD))
+COMMIT_TAG := $(REPO):$(COMMIT)
+BRANCH_TAG := $(REPO):$(BRANCH)-$(VERSION)
 
-LIBDIRS = \
-           common      \
-           level1_lib  \
-           level2_lib  \
-           pixel_qa
-EXEDIRS = tools
+build:
+	@docker build --target builder -f Dockerfile -t $(COMMIT_TAG) --rm=true --compress $(PWD)
 
-#-----------------------------------------------------------------------------
-all: executables
+tag:
+	@docker tag $(COMMIT_TAG) $(BRANCH_TAG)
+	@$(shell [ $(BRANCH) == master ] && docker tag $(COMMIT_TAG) $(REPO):latest)
 
-#-----------------------------------------------------------------------------
-libraries:
-	@for dir in $(LIBDIRS); do \
-        echo "make all in $$dir..."; \
-        $(MAKE) -C $$dir || exit 1; done
+login:
+	@$(if $(and $(DOCKER_USER), $(DOCKER_PASS)), docker login -u $(DOCKER_USER) -p $(DOCKER_PASS), docker login)
 
-#-----------------------------------------------------------------------------
-executables: libraries
-	@for dir in $(EXEDIRS); do \
-        echo "make all in $$dir..."; \
-        $(MAKE) -C $$dir || exit 1; done
+push: login
+	docker push $(REPO)
 
-#-----------------------------------------------------------------------------
-install-headers:
-# if the ESPA_LEVEL2QA_INC environment variable points to the 'include'
-# directory, then there is no need to install anything
-ifneq ($(ESPA_LEVEL2QA_INC), $(CURDIR)/include)
-	@for dir in $(LIBDIRS); do \
-        echo "installing all in $$dir..."; \
-        $(MAKE) -C $$dir install-headers || exit 1; done
-else
-	echo "$(ESPA_LEVEL2QA_INC) is the same as the include directory. Include files already installed."
-endif
+debug:
+	@echo "VERSION:    $(VERSION)"
+	@echo "REPO:       $(REPO)"
+	@echo "BRANCH:     $(BRANCH)"
+	@echo "COMMIT_TAG: $(COMMIT_TAG)"
+	@echo "BRANCH_TAG: $(BRANCH_TAG)"
 
-#-----------------------------------------------------------------------------
-install-lib: libraries
-# if the ESPA_LEVEL2QA_LIB environment variable points to the 'lib' directory,
-# then there is no need to install anything
-ifneq ($(ESPA_LEVEL2QA_LIB), $(CURDIR)/lib)
-	@for dir in $(LIBDIRS); do \
-        echo "installing all in $$dir..."; \
-        $(MAKE) -C $$dir install-lib || exit 1; done
-else
-	echo "$(ESPA_LEVEL2QA_LIB) is the same as the lib directory. Libraries already installed."
-endif
-
-#-----------------------------------------------------------------------------
-install-executables: executables
-	@for dir in $(EXEDIRS); do \
-        echo "installing all in $$dir..."; \
-        $(MAKE) -C $$dir install || exit 1; done
-
-#-----------------------------------------------------------------------------
-install: install-lib install-headers install-executables
-
-#-----------------------------------------------------------------------------
-clean:
-# all directories need to be cleaned
-	@for dir in $(LIBDIRS) $(EXEDIRS); do \
-        echo "make clean in $$dir..."; \
-        $(MAKE) -C $$dir clean || exit 1; done
-	rm -r include lib
+docker-deploy: debug build tag push
